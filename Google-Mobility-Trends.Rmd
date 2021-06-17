@@ -1,0 +1,298 @@
+---
+title: "Time Series Analysis"
+author: "Eldhose Poulose"
+date: "24.04.2021"
+output:
+  pdf_document: 
+    latex_engine: xelatex
+  html_document: default
+subtitle: Google Mobility Trends Data
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Introduction
+
+
+```{r pkg loader, include=FALSE}
+#tinytex::install_tinytex()
+#install.packages("devtools") 
+#install.packages("webshot")
+#webshot::install_phantomjs()
+#devtools::install_github("rstudio/d3heatmap")
+#install.packages("XML", repos = "http://www.omegahat.org/R")
+#install.packages("RTidyHTML", repos = "http://www.omegahat.org/R", type="source")
+ipak <- function(pkg){
+    new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+    if (length(new.pkg)) 
+        install.packages(new.pkg, dependencies = TRUE)
+    sapply(pkg, require, character.only = TRUE)
+}
+
+packages <- c("ggplot2", "ggfortify", "FactoMineR", "statsr","devtools", "MASS","graphics","rbokeh","flexdashboard","NLP","tidyverse","reshape2","plyr","tinytex","Matrix","gridExtra","d3heatmap","igraph","zoo","purrr","rvest","httr","dplyr", "magrittr","stringr","RSelenium","janitor","curl","tidyr","forecast")
+ipak(packages)
+```
+
+
+### Ingest Data
+
+
+```{r}
+get_google_target <- read_html("https://www.google.com/covid19/mobility/")
+Link <- get_google_target %>% html_nodes(".icon-link") %>% html_attr("href")
+get_google_target <- Link[1]
+get_google_target
+```
+
+
+
+```{r}
+# get_apple_target <- function(cdn_url = "https://covid19-static.cdn-apple.com",
+#                              json_file = "covid19-mobility-data/current/v3/index.json") {
+#   tf <- tempfile(fileext = ".json")
+#   curl::curl_download(paste0(cdn_url, "/", json_file), tf)
+#   json_data <- jsonlite::fromJSON(tf)
+#   paste0(cdn_url, json_data$basePath, json_data$regions$`en-us`$csvPath)
+# }
+# get_apple_target()
+```
+
+
+```{r}
+fileName <- tail(unlist(strsplit(get_google_target,"/")), n=1) 
+download.file(get_google_target,fileName)
+googleMobility <- read.csv(fileName,stringsAsFactors = TRUE)
+```
+**Observation:** Reference date for normalization is January 13, 2020. Note the values in that column are set to 100.
+
+**Data Dimension**
+```{r}
+dim(googleMobility)
+```
+
+```{r}
+summary(as.data.frame(unclass(googleMobility[,1:3]), stringsAsFactors = TRUE))
+```
+
+```{r}
+colnames(googleMobility)
+typeof(colnames(googleMobility))
+```
+
+```{r}
+if (any(is.na(googleMobility[,"census_fips_code"]))) {googleMobility <- subset(googleMobility, select = -census_fips_code)}
+```
+
+**Answering basic questions about the Dataset**
+
+* Here I try to answer the basic questions which I come across from the data.
+  + How many country_region_code are present in the data?
+  + How many country_region are present in the data?
+  + sub_region1
+  + sub_region2
+  + metro_area
+  + iso_3166_2_code
+  + place_id
+  + date
+  
+
+```{r}
+print(length(levels(googleMobility$country_region_code)))
+#lsCountry_region_code <- as.String(levels(googleMobility$country_region_code))
+#lsCountry_region_code
+```
+
+
+```{r}
+print(length(levels(googleMobility$country_region)))
+#print(as.String(levels(googleMobility$country_region)))
+```
+
+```{r}
+print(length(levels(googleMobility$sub_region_1)))
+#print(as.String(levels(googleMobility$sub_region_1)))
+```
+
+
+```{r}
+print(length(levels(googleMobility$sub_region_2)))
+#print(as.String(levels(googleMobility$sub_region_2)))
+```
+
+```{r}
+print(length(levels(googleMobility$metro_area)))
+#print(as.String(levels(googleMobility$metro_area)))
+```
+
+```{r}
+print(length(levels(googleMobility$iso_3166_2_code)))
+#print(as.String(levels(googleMobility$iso_3166_2_code)))
+```
+
+```{r}
+print(length(levels(googleMobility$place_id)))
+#print(as.String(levels(googleMobility$place_id)))
+```
+
+```{r}
+googleMobility$date <- as.POSIXct(googleMobility$date, format = "%Y-%m-%d", origin = "1970-01-01" )
+length(googleMobility$date)
+```
+
+
+## Data transformation
+
+Here I convert the data into narrow/long format. For this I use melt function from reshape2 package.
+
+```{r}
+#googleMobility_melted <- melt(googleMobility,id= c("country_region_code","country_region","sub_region_1","sub_region_2","metro_area","iso_3166_2_code","place_id","date"))
+colNames <- c("country_region_code","country_region","sub_region_1","sub_region_2","metro_area","iso_3166_2_code","place_id","date")
+googleMobility_melted <- tidyr::pivot_longer( data = googleMobility, cols = setdiff( names(googleMobility), colNames), names_to = "activity", values_to = "value" )
+```
+
+**Remove empty rows**
+```{r}
+googleMobility_na <- googleMobility_melted[complete.cases(googleMobility_melted), ]
+```
+
+**Add: DateInfo, Day**
+
+```{r}
+# googleMobility_na$Date <- as.POSIXct(googleMobility_na$Date, format = "%Y.%m.%d", origin = "1970.01.01" )
+googleMobility_na$day <- weekdays(googleMobility_na$date)
+googleMobility_na$day <- as.factor(googleMobility_na$day)
+googleMobility_na$dateInfo <- format(googleMobility_na$date, "%a %b %d %Y")
+googleMobility_na$dateInfo <- as.factor(googleMobility_na$dateInfo)
+googleMobility_na$activity <- as.factor(googleMobility_na$activity)
+```
+
+
+**Draw Random Samples**
+```{r radnomSample}
+set.seed(123)
+googleMobility_na %>% dplyr::sample_n(10)
+```
+##Summary of the cleaned data
+```{r}
+summary(as.data.frame(unclass(appleMobility_na), stringsAsFactors = TRUE))
+```
+
+## Data Partition
+
+*I am interested in the geographical types and transportation modes. Therefore we group the data as per this requirement.
+
+```{r}
+googleMobility_na %>%
+  dplyr::group_by(country_region, activity) %>%
+  dplyr::count()
+```
+
+
+```{r}
+googleMobility_part <- split(googleMobility_na, googleMobility_na[,c("country_region","activity")])
+```
+
+## Heat-Map Plots
+
+### Contigency Matrix
+```{r}
+gMatDateRegion <- purrr::map(googleMobility_part, function(dfX) { xtabs( formula = value ~ date + country_region, data = dfX, sparse = TRUE ) } )
+gMatDateRegion <- gMatDateRegion[ purrr::map_lgl(gMatDateRegion, function(x) nrow(x) > 0 ) ]
+
+```
+
+```{r}
+gsparseMatDateRegion <- purrr::map_df(gMatDateRegion, Matrix::summary, .id = "Type" )
+head(gsparseMatDateRegion)
+```
+
+
+
+```{r}
+ggplot2::ggplot(gsparseMatDateRegion) +
+  ggplot2::geom_tile( ggplot2::aes( x = j, y = i, fill = log10(x)), color = "white") +
+  ggplot2::scale_fill_gradient(low = "white", high = "blue") +
+  ggplot2::xlab("Region") + ggplot2::ylab("Date") + 
+  ggplot2::facet_wrap( ~Type, scales = "free", ncol = 2)
+```
+
+```{r}
+# d3heatmap::d3heatmap( x = aMatDateRegion[["country/region.driving"]], Rowv = FALSE )
+
+```
+
+
+```{r}
+# th <- 0.94
+# aNNGraphs <- 
+#   purrr::map( aMatDateRegion, function(m) { 
+#     m2 <- cor(as.matrix(m))
+#     for( i in 1:nrow(m2) ) {
+#       m2[i,i] <- 0
+#     }
+#     m2 <- as( m2, "dgCMatrix") 
+#     #m2@x[ m2@x <= th ] <- 0
+#     m2@x[ m2@x > th ] <- 1
+#     igraph::graph_from_adjacency_matrix(Matrix::drop0(m2), weighted = TRUE, mode = "undirected")
+#   })
+```
+
+```{r}
+# ind <- 3
+# ceb <- cluster_edge_betweenness(aNNGraphs[[ind]])  
+# dendPlot(ceb, mode="hclust", main = names(aNNGraphs)[[ind]])
+```
+
+```{r}
+# plot(ceb, aNNGraphs[[ind]], vertex.size=1, vertex.label=NA, main = names(aNNGraphs)[[ind]])
+```
+
+# Time Series Analysis
+```{r}
+gDateStringToDateInfo <- unique(googleMobility_na[, c("date", "dateInfo")] )
+gDateStringToDateInfo <- setNames( gDateStringToDateInfo$DateInfo, gDateStringToDateInfo$Date )
+# gDateStringToDateInfo <- as.POSIXct(gDateStringToDateInfo, format = "%a %b %d %Y")
+gTSDirReqByCountry <-  purrr::map( gMatDateRegion, function(m) rowSums(m) )
+```
+
+
+```{r}
+gmatTS <- do.call( cbind, gTSDirReqByCountry)
+```
+
+
+```{r}
+zooObj <- zoo::zoo( x = gmatTS, as.POSIXct(rownames(gmatTS)) )
+```
+
+```{r}
+autoplot(zooObj) +
+  aes(colour = NULL, linetype = NULL) +
+    facet_grid(Series ~ ., scales = "free_y") +
+  geom_vline( xintercept = gDateStringToDateInfo[weekdays(gDateStringToDateInfo) == "Sunday"], color = "red", linetype = "dashed", size = 0.3 )
+```
+
+
+# Forecasting
+```{r}
+gTSModels <- purrr::map( names(zooObj), function(x) { forecast::auto.arima( zoo( x = zooObj[,x], order.by = index(zooObj) ) ) } )
+```
+
+
+```{r}
+gTSModels <- purrr::map( names(zooObj), function(x) forecast::forecast( as.matrix(zooObj)[,x] ) )
+names(gTSModels) <- names(zooObj)
+```
+
+
+```{r}
+glsPlots <- purrr::map( names(gTSModels), function(x) autoplot(gTSModels[[x]]) + ylab("Volume") + ggtitle(x) )
+names(glsPlots) <- names(gTSModels)
+```
+
+```{r}
+do.call( gridExtra::grid.arrange, glsPlots )
+```
+
+## Packages, Repositories, Articles
